@@ -141,6 +141,32 @@ function clear() {
  * 历史记录淘汰时只删带 history 且不带 local 的；本地库收藏的缓存永不被历史淘汰。
  */
 function galleryDir(gid) { return path.join(dir(), 'g' + String(gid)); }
+
+/** 确保某本画册的缓存目录存在，返回其绝对路径（供「打开缓存所在目录」使用） */
+function ensureGalleryDir(gid) {
+  const d = galleryDir(gid);
+  fs.mkdirSync(d, { recursive: true });
+  return d;
+}
+
+/** 该画册是否已有缓存文件（用于右键菜单判断要不要提示「还没有缓存」） */
+function galleryHasFiles(gid) {
+  const d = galleryDir(gid);
+  try {
+    if (!fs.existsSync(d)) return false;
+    let n = 0;
+    const walk = (q) => {
+      for (const e of fs.readdirSync(q, { withFileTypes: true })) {
+        if (e.name === '.trash' || e.name === '.meta.json') continue;
+        const r = path.join(q, e.name);
+        if (e.isDirectory()) walk(r); else n++;
+        if (n > 0) return;
+      }
+    };
+    walk(d);
+    return n > 0;
+  } catch (e) { return false; }
+}
 function metaPath(gid) { return path.join(galleryDir(gid), '.meta.json'); }
 
 function readMeta(gid) {
@@ -222,4 +248,4 @@ function trashStats() {
 }
 
 module.exports = { dir, keyOf, extOf, pathOf, pathOfKey, statOf, ensure, stats, clear, streamTo, removeGallery, sweepTrash, trashStats,
-  galleryDir, readMeta, writeMeta, getTags, setTag, touchGallery, isHistoryOnly };
+  galleryDir, ensureGalleryDir, galleryHasFiles, readMeta, writeMeta, getTags, setTag, touchGallery, isHistoryOnly };

@@ -9,6 +9,8 @@ export default function LibraryPage({ nav, toast }: any) {
   const [sel, setSel] = useState<string[]>([]);
   const [sort, setSort] = useState('added');
   const [showTags, setShowTags] = useState(true);
+  // 右键菜单：{ x, y, item } | null
+  const [menu, setMenu] = useState<{ x: number; y: number; item: any } | null>(null);
 
   const reload = async () => {
     const [r, t] = await Promise.all([api.libSearch({ q, tags: sel, sort }), api.libTags()]);
@@ -18,6 +20,28 @@ export default function LibraryPage({ nav, toast }: any) {
   useEffect(() => { reload(); }, [q, sel, sort]);
 
   const toggleTag = (t: string) => setSel((s) => s.includes(t) ? s.filter((x) => x !== t) : [...s, t]);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(null); };
+    window.addEventListener('click', close);
+    window.addEventListener('contextmenu', close);   // 在别处再右键也先关掉旧菜单
+    window.addEventListener('keydown', onEsc);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('contextmenu', close);
+      window.removeEventListener('keydown', onEsc);
+    };
+  }, [menu]);
+
+  // 打开该画集的缓存目录
+  const openCacheDir = async (it: any) => {
+    setMenu(null);
+    const r = await api.libOpenCacheDir(it.gid);
+    if (!r.ok) toast(r.error || '打开失败');
+    else if (!r.hasFiles) toast('该画集还没有缓存文件，已打开空目录');
+  };
 
   return (
     <div className="page">
@@ -51,7 +75,9 @@ export default function LibraryPage({ nav, toast }: any) {
       {items.length === 0 && <div className="empty">本地库为空</div>}
       <div className="grid">
         {items.map((it) => (
-          <div className="card" key={it.gid} onClick={() => nav({ name: 'gallery', gid: it.gid, token: it.token })}>
+          <div className="card" key={it.gid}
+            onClick={() => nav({ name: 'gallery', gid: it.gid, token: it.token })}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY, item: it }); }}>
             {it.cover ? <img className="cover" src={api.img(it.cover)} loading="lazy" /> : <div className="cover" />}
             <div className="meta">
               <div className="title">{it.title}</div>
@@ -64,6 +90,12 @@ export default function LibraryPage({ nav, toast }: any) {
           </div>
         ))}
       </div>
+
+      {menu && (
+        <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onClick={(e) => e.stopPropagation()}>
+          <div className="ctx-item" onClick={() => openCacheDir(menu.item)}>打开缓存所在目录</div>
+        </div>
+      )}
     </div>
   );
 }

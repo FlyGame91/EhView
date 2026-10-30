@@ -349,3 +349,26 @@ table.tbl th { color: var(--text-3); font-weight: 500; }
   font-size: 15px; line-height: 1; display: flex; align-items: center; justify-content: center;
 }
 .searchbox .clear-x:hover { background: var(--bg-4); color: var(--text); }
+
+
+/* ---------- 右键菜单 ---------- */
+.ctx-menu {
+  position: fixed;
+  z-index: 500;
+  min-width: 180px;
+  background: var(--bg-2, #1e1f24);
+  border: 1px solid var(--line, #2c2e35);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+  user-select: none;
+}
+.ctx-item {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--fg, #e6e6e6);
+}
+.ctx-item:hover { background: var(--bg-3, #2a2c33); }

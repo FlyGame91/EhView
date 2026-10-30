@@ -115,6 +115,17 @@ app.whenReady().then(async () => {
   });
   createWindow();
 
+  // 预热：把关键域名的 DoH 解析与连接提前建好，省掉用户第一次点击的握手开销
+  setTimeout(() => {
+    try {
+      const ws = dns.warmup();
+      Promise.allSettled(ws).then((rs) => {
+        const ok = rs.filter((r) => r.status === 'fulfilled' && r.value && r.value.ok).length;
+        console.log('DoH 预热完成:', ok + '/' + ws.length);
+      });
+    } catch (e) { console.warn('warmup', e.message); }
+  }, 1500);
+
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
@@ -150,6 +161,12 @@ ipcMain.handle('net:diagnose', async () => {
   catch (e) { return { ok: false, error: e.message, results: [] }; }
 });
 ipcMain.handle('net:state', () => dns.config());
+
+/* DoH 测速优选：同时比延迟与「解析是否被污染」 */
+ipcMain.handle('dns:benchmark', async (e, extra) => {
+  try { return { ok: true, ...(await dns.benchmark(extra || [])) }; }
+  catch (err) { return { ok: false, error: err.message }; }
+});
 
 /* ---- 登录 ---- */
 let loginSession = { active: false, profile: null, startedAt: 0 };
@@ -374,6 +391,58 @@ ipcMain.handle('lib:remove', (e, gid) => {
 ipcMain.handle('lib:get', (e, gid) => library.get(gid));
 ipcMain.handle('lib:tags', () => library.tagIndex());
 ipcMain.handle('lib:setread', (e, gid, index, total) => library.setRead(gid, index, total));
+
+/* ---- 本地库右键：打开该画集的缓存所在目录 ---- */
+ipcMain.handle('shell:open', async (e, p) => { try { const err = await shell.openPath(String(p)); return { ok: !err, error: err || undefined }; } catch (err) { return { ok: false, error: err.message }; } });
+
+ipcMain.handle('lib:openCacheDir', async (e, gid) => {
+  try {
+    const g = String(gid || '').replace(/[^0-9]/g, '');
+    if (!g) return { ok: false, error: 'gid 无效' };
+    const hasFiles = cache.galleryHasFiles(g);
+    const dir = cache.ensureGalleryDir(g);   // 没有缓存时也建好目录，方便用户放东西
+    const err = await shell.openPath(dir);
+    if (err) return { ok: false, error: err, dir, hasFiles };
+    return { ok: true, dir, hasFiles };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+/* ---- 阅读器：把当前页另存为 ---- */
+ipcMain.handle('image:saveAs', async (e, payload) => {
+  try {
+    const { gid, key, ext, src, index, title } = payload || {};
+    const g = String(gid || '').replace(/[^0-9]/g, '');
+    let file = '';
+    // 1) 优先用缓存文件（local 命中时零网络）
+    if (key && /^[0-9a-f]{40}$/.test(String(key))) {
+      const fp = cache.pathOfKey(String(key), ext || '.jpg', g);
+      if (fs.existsSync(fp) && fs.statSync(fp).size > 0) file = fp;
+    }
+    // 2) 缓存没有就按来源 URL 找 / 现下
+    if (!file && src) {
+      const fp = cache.pathOf(src, g);
+      if (fs.existsSync(fp) && fs.statSync(fp).size > 0) file = fp;
+      else { const got = await cache.ensure(src, { gid: g }); if (got) file = got; }
+    }
+    if (!file) return { ok: false, error: '找不到图片（缓存未命中且下载失败）' };
+
+    const s = cfg.get();
+    const safeTitle = String(title || ('g' + g)).replace(/[\\/:*?"<>|\r\n]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 100);
+    const defaultName = safeTitle + '_p' + String(index || 1).padStart(3, '0') + (path.extname(file) || '.jpg');
+    const defaultDir = s.downloadDir || app.getPath('downloads');
+    const r = await dialog.showSaveDialog(mainWindow, {
+      title: '保存图片',
+      defaultPath: path.join(defaultDir, defaultName),
+      filters: [
+        { name: '图片', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif'] },
+        { name: '全部文件', extensions: ['*'] }
+      ]
+    });
+    if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+    fs.copyFileSync(file, r.filePath);
+    return { ok: true, path: r.filePath, size: fs.statSync(r.filePath).size };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
 
 /* ---- 下载 ---- */
 ipcMain.handle('dl:list', () => download.list());

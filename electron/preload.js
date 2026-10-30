@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('api', {
   openPath: (p) => ipcRenderer.invoke('shell:open', p),
   netDiagnose: () => ipcRenderer.invoke('net:diagnose'),
   netState: () => ipcRenderer.invoke('net:state'),
+  dnsBenchmark: (extra) => ipcRenderer.invoke('dns:benchmark', extra),
 
   login: (opts) => ipcRenderer.invoke('auth:login', opts),
   pollLogin: () => ipcRenderer.invoke('auth:poll'),
@@ -37,6 +38,8 @@ contextBridge.exposeInMainWorld('api', {
   libGet: (gid) => ipcRenderer.invoke('lib:get', gid),
   libTags: () => ipcRenderer.invoke('lib:tags'),
   libSetRead: (gid, index, total) => ipcRenderer.invoke('lib:setread', gid, index, total),
+  libOpenCacheDir: (gid) => ipcRenderer.invoke('lib:openCacheDir', gid),
+  saveImage: (payload) => ipcRenderer.invoke('image:saveAs', payload),
 
   dlList: () => ipcRenderer.invoke('dl:list'),
   dlArchive: (payload) => ipcRenderer.invoke('dl:archive', payload),

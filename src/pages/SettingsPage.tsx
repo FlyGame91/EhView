@@ -8,6 +8,8 @@ export default function SettingsPage({ settings, save, auth, setAuth, toast }: a
   const [cookieText, setCookieText] = useState('');
   const [cache, setCache] = useState<any>(null);
   const [diag, setDiag] = useState<any>(null);
+  const [bench, setBench] = useState<any>(null);
+  const [benchBusy, setBenchBusy] = useState(false);
   const [diagBusy, setDiagBusy] = useState(false);
 
   useEffect(() => { setS(settings); }, [settings]);
@@ -32,6 +34,21 @@ export default function SettingsPage({ settings, save, auth, setAuth, toast }: a
       setDiag({ ok: false, error: e.message, results: [] });
     }
     setDiagBusy(false);
+  };
+
+  // DoH 测速：同时看延迟和「解析是否被污染」，只把干净的按快慢排序
+  const runBenchmark = async () => {
+    setBenchBusy(true); setBench(null);
+    try {
+      const cur = (s.secureDns?.servers || []).filter(Boolean);
+      const r = await api.dnsBenchmark(cur);
+      setBench(r);
+      if (r.ok && r.best) {
+        upd({ secureDns: { ...s.secureDns, enabled: true, servers: [r.best.url] } });
+        toast('已选用最快且未被污染的 DoH：' + r.best.ms + 'ms');
+      }
+    } catch (e: any) { setBench({ ok: false, error: e.message }); }
+    setBenchBusy(false);
   };
 
   const startLogin = async () => {
@@ -144,8 +161,21 @@ export default function SettingsPage({ settings, save, auth, setAuth, toast }: a
           <>
             <div className="field">
               <label>安全 DNS（DoH）服务器</label>
-              <input type="text" value={(s.secureDns?.servers || [])[0] || ''} onChange={(e) => upd({ secureDns: { ...s.secureDns, servers: [e.target.value] } })} placeholder="https://doh.cleanbrowsing.org/doh/security-filter/" />
+              <div className="row">
+                <input type="text" value={(s.secureDns?.servers || [])[0] || ''} onChange={(e) => upd({ secureDns: { ...s.secureDns, servers: [e.target.value] } })} placeholder="https://doh.cleanbrowsing.org/doh/security-filter/" style={{ flex: 1 }} />
+                <button className="btn" onClick={runBenchmark} disabled={benchBusy}>{benchBusy ? '测速中…' : '测速优选'}</button>
+              </div>
             </div>
+            {bench && (
+              <div className="hint" style={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap', marginTop: 6 }}>
+                {!bench.ok ? ('测速失败：' + (bench.error || ''))
+                  : [
+                      ...(bench.clean || []).map((x: any) => '✅ ' + String(x.ms).padStart(4) + 'ms  ' + x.url),
+                      ...(bench.dirty || []).map((x: any) => '⚠️ ' + String(x.ms).padStart(4) + 'ms  ' + x.url + '  （解析被污染，已排除）'),
+                      ...(bench.dead || []).map((x: any) => '❌  ' + '     ' + '  ' + x.url + '  （' + (x.error || '不可达') + '）'),
+                    ].join('\n')}
+              </div>
+            )}
             <div className="hint" style={{ marginTop: 6 }}>
               直连原理：GFW 只掐 TCP 443 的 SNI，UDP 443 的 QUIC 没掐。开启后走 DoH 拿真实解析 + HTTPS 记录里的 alpn=h3，Chromium 才会切到 HTTP/3。
               必须用<b>境外</b> DoH —— 国内阿里/腾讯 DoH 的上游同样被污染，填了等于没填。

@@ -10,7 +10,15 @@ function unesc(s) {
 }
 
 function base() { return cfg.get().site === 'e-hentai' ? 'https://e-hentai.org' : 'https://exhentai.org'; }
-function apiBase() { return 'https://api.e-hentai.org/api.php'; }
+/**
+ * gdata 接口的入口。
+ *
+ * 实测（2026-10-31）：api.e-hentai.org 解析到 7 个 LeaseWeb 自建 IP
+ * （37.48.81.204 / 212.7.200.104 / … / 95.211.79.44），全部 TLS SNI 阻断（ECONNRESET），
+ * 且没有 SVCB 记录（不支持 h3）——搜索时每次都要失败重试，是"搜索要 15 秒"的主因。
+ * 而主站域名 /api.php 是同一套接口：实测 200 + 完整 gmetadata，走 Cloudflare/HTTP3。
+ */
+function apiBase() { return base() + '/api.php'; }
 
 const CATS = { doujinshi: 2, manga: 4, artistcg: 8, gamecg: 16, western: 512, nonh: 256, imageset: 32, cosplay: 64, asianporn: 128, misc: 1 };
 function catsToMask(list) {
@@ -19,15 +27,21 @@ function catsToMask(list) {
 }
 
 /** 批量元数据（官方 API，无需登录） */
+let gdataDownUntil = 0;   // 已知不可用时在此时间戳前直接跳过，避免每次搜索都空等
 async function gdata(pairs) {
   if (!pairs.length) return [];
+  if (Date.now() < gdataDownUntil) return [];
   const out = [];
   for (let i = 0; i < pairs.length; i += 25) {
     const chunk = pairs.slice(i, i + 25);
     try {
-      const r = await http.json(apiBase(), { method: 'POST', body: JSON.stringify({ method: 'gdata', gidlist: chunk.map((p) => [parseInt(p.gid, 10), p.token]), namespace: 1 }) });
+      const r = await http.json(apiBase(), { method: 'POST', timeout: 8000, body: JSON.stringify({ method: 'gdata', gidlist: chunk.map((p) => [parseInt(p.gid, 10), p.token]), namespace: 1 }) });
       if (r && r.gmetadata) out.push(...r.gmetadata);
-    } catch (e) { console.warn('gdata fail', e.message); }
+    } catch (e) {
+      console.warn('gdata fail', e.message);
+      gdataDownUntil = Date.now() + 10 * 60 * 1000;   // 10 分钟内不再尝试
+      break;
+    }
   }
   return out;
 }

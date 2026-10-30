@@ -181,6 +181,25 @@ export default function ReaderPage({ gid, token, startIndex, title, nav, toast, 
     try { api.saveSettings({ reader: { ...(settings?.reader || {}), mode: m } }); } catch (e) {}
   };
 
+  // 另存当前页：优先用已落盘的缓存文件，缓存没有就先下载再弹另存为
+  const [saving, setSaving] = useState(false);
+  const saveCurrent = async () => {
+    if (!curOk || !cur) { toast('当前页还没加载完成'); return; }
+    setSaving(true);
+    try {
+      const r = await api.saveImage({
+        gid, title,
+        index: idx + 1,
+        key: cur.local ? cur.key : '',
+        ext: cur.local ? cur.ext : '',
+        src: cur.local ? '' : (cur.src || '')
+      });
+      if (r.ok) toast('已保存到 ' + r.path);
+      else if (!r.canceled) toast('保存失败：' + (r.error || '未知错误'));
+    } catch (e: any) { toast('保存失败：' + e.message); }
+    setSaving(false);
+  };
+
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) document.documentElement.requestFullscreen();
     else document.exitFullscreen();
@@ -253,6 +272,7 @@ export default function ReaderPage({ gid, token, startIndex, title, nav, toast, 
         </select>
         <button className="btn sm" onClick={() => setContinuous((c) => !c)}>{continuous ? '单页模式' : '连续模式'}</button>
         <button className="btn sm" onClick={() => setShowSidebar((s) => !s)}>{showSidebar ? '隐藏缩略图' : '显示缩略图'}</button>
+        <button className="btn sm" onClick={saveCurrent} disabled={saving || !curOk} title="把当前页另存为">{saving ? '保存中…' : '保存'}</button>
         <button className="btn sm" onClick={toggleFullscreen}>全屏</button>
         <button className="btn sm" onClick={() => setShowBar((s) => !s)}>{showBar ? '隐藏工具栏' : '显示工具栏'}</button>
       </div>
