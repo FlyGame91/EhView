@@ -1,0 +1,24 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+release/
+out/
+
+# 运行期数据（下载文件、图片缓存、历史）
+data/
+*.log
+*.log.[0-9]*
+
+# 随项目分发的第三方浏览器（体积大且非本项目代码）
+tools/
+
+# 本地开发与调试残留
+_probe/
+_backup/
+_recovery/
+*.bak-*
+*.prepublish-*
+.DS_Store
+Thumbs.db
