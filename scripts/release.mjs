@@ -27,6 +27,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import https from 'node:https';
+import http from 'node:http';
 
 const SRC = process.env.EHV_SRC || 'D:/EhView';
 const PUB = process.env.EHV_PUBLISH || 'D:/EhView/_publish';
@@ -181,8 +182,9 @@ if (!launched.startsWith('0 ')) fail('启动失败: ' + launched);
 let okStartup = false;
 for (let attempt = 1; attempt <= 10 && !okStartup; attempt++) {
   await new Promise((res) => setTimeout(res, attempt === 1 ? 8000 : 2500));
+  // CDP 的 /json 是 HTTP 接口，不是 HTTPS —— 用 https.request 会握手失败，永远探测不到
   const probe = await new Promise((resolve) => {
-    const req = https.request({ host: '127.0.0.1', port, path: '/json', method: 'GET', timeout: 5000 }, (resp) => {
+    const req = http.request({ host: '127.0.0.1', port, path: '/json', method: 'GET', timeout: 5000 }, (resp) => {
       let b = ''; resp.on('data', (c) => b += c); resp.on('end', () => resolve(b));
     });
     req.on('error', () => resolve(''));
