@@ -4,6 +4,10 @@
  *
  * 用法：node scripts/release.mjs <version>     例如 node scripts/release.mjs 0.2.1
  *
+ * 所有产物都收敛在工作目录内（不外溢到 D:\ 根）：
+ *   _publish/    干净的发布副本（带 .git，不参与主仓库跟踪）
+ *   _artifacts/  打包产物 + 解包验证目录
+ *
  * 这个脚本把「发布」当成一条流水线，每一步都有可验证的判据：
  *   1. 前置检查   —— git 干净、版本号一致、作者身份是虚拟身份
  *   2. 同步源码   —— 只按白名单复制，绝不整目录拷贝
@@ -25,8 +29,8 @@ import { execFileSync, spawn } from 'node:child_process';
 import https from 'node:https';
 
 const SRC = process.env.EHV_SRC || 'D:/EhView';
-const PUB = process.env.EHV_PUBLISH || 'D:/EhView-publish';
-const DIST = process.env.EHV_DIST || 'D:/EhView-dist';
+const PUB = process.env.EHV_PUBLISH || 'D:/EhView/_publish';
+const DIST = process.env.EHV_DIST || 'D:/EhView/_artifacts';
 const OWNER = process.env.EHV_OWNER || 'FlyGame91';
 const REPO = process.env.EHV_REPO || 'EhView';
 const SEVENZIP = process.env.EHV_7Z || 'C:/Program Files/7-Zip/7z.exe';
