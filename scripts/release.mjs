@@ -177,29 +177,40 @@ const r = sh('powershell', ['-NoProfile', '-Command',
   '$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = \'' + cmdline.replace(/'/g, "''") + '\'; CurrentDirectory = \'' + verifyDir + '\' }; "$($r.ReturnValue) $($r.ProcessId)"']);
 const launched = r.trim();
 if (!launched.startsWith('0 ')) fail('启动失败: ' + launched);
-await new Promise((res) => setTimeout(res, 12000));
-const probe = await new Promise((resolve) => {
-  const req = https.request({ host: '127.0.0.1', port, path: '/json', method: 'GET', timeout: 8000 }, (resp) => {
-    let b = ''; resp.on('data', (c) => b += c); resp.on('end', () => resolve(b));
-  });
-  req.on('error', () => resolve(''));
-  req.on('timeout', () => { req.destroy(); resolve(''); });
-  req.end();
-});
+// 打包版冷启动可能要十几秒，轮询到窗口就绪为止（最多 30s）
 let okStartup = false;
-try { okStartup = JSON.parse(probe).some((p) => p.type === 'page'); } catch (e) {}
+for (let attempt = 1; attempt <= 10 && !okStartup; attempt++) {
+  await new Promise((res) => setTimeout(res, attempt === 1 ? 8000 : 2500));
+  const probe = await new Promise((resolve) => {
+    const req = https.request({ host: '127.0.0.1', port, path: '/json', method: 'GET', timeout: 5000 }, (resp) => {
+      let b = ''; resp.on('data', (c) => b += c); resp.on('end', () => resolve(b));
+    });
+    req.on('error', () => resolve(''));
+    req.on('timeout', () => { req.destroy(); resolve(''); });
+    req.end();
+  });
+  try { okStartup = JSON.parse(probe).some((p) => p.type === 'page'); } catch (e) {}
+  if (okStartup) log('   第 ' + attempt + ' 次探测到窗口就绪');
+}
 try { sh('taskkill', ['/IM', 'EhView.exe', '/F', '/T']); } catch (e) {}
 if (!okStartup) fail('打包版启动后没有可用窗口（可能依赖缺失或崩溃）');
 log('   独立目录启动 OK（窗口就绪）');
 
 // ---------- 8. 创建 release + 上传 ----------
 log('8/9 创建 release + 上传');
+// 优先读本地缓存 —— 直接调 git credential fill 会让 Git Credential Manager 每次弹出
+// 「Select an account」窗口，非常打扰。一次取到后就落在 .release-token（不进仓库）。
 let token = '';
-try {
-  const cred = sh('git', ['credential', 'fill'], { cwd: PUB, input: 'protocol=https\nhost=github.com\nusername=' + OWNER + '\n\n' });
-  const m = /password=(.+)/.exec(cred); if (m) token = m[1].trim();
-} catch (e) {}
-if (!token) fail('未能从 git credential 取到 token');
+const TOKEN_FILE = 'D:/EhView/.release-token';
+try { token = fs.readFileSync(TOKEN_FILE, 'utf8').trim(); } catch (e) {}
+if (!token) {
+  try {
+    const cred = sh('git', ['credential', 'fill'], { cwd: PUB, input: 'protocol=https\nhost=github.com\nusername=' + OWNER + '\n\n' });
+    const m = /password=(.+)/.exec(cred); if (m) token = m[1].trim();
+    if (token) { try { fs.writeFileSync(TOKEN_FILE, token, 'utf8'); log('   已缓存 token 到 ' + TOKEN_FILE); } catch (e) {} }
+  } catch (e) {}
+}
+if (!token) fail('未能取到 token（可先手动写入 ' + TOKEN_FILE + '）');
 const hdr = { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json', 'User-Agent': 'EhView-release' };
 
 const body = fs.readFileSync(path.join(SRC, 'scripts/release-notes.md'), 'utf8').replace(/\{\{VERSION\}\}/g, version);
