@@ -5,6 +5,7 @@ const { app, BrowserWindow, ipcMain, protocol, session, shell, dialog, Menu, net
 
 const cfg = require('./lib/config');
 const http = require('./lib/http');
+const dns = require('./lib/dns');
 const cookies = require('./lib/cookies');
 const eh = require('./lib/eh');
 const cache = require('./lib/cache');
@@ -45,6 +46,17 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   const s = cfg.get();
+  // 先配 HostResolver 的 DoH，再挂代理 —— 顺序反了会让首批请求用错解析器
+  // 先回收分区里残留的 QUIC 连接状态（必须在 session 创建之前）
+  try {
+    const prep = dns.preparePartition('persist:ehmain');
+    if (prep.cleaned) console.log('已清理分区 QUIC 状态:', prep.moved);
+  } catch (e) { console.warn('preparePartition', e.message); }
+  try {
+    const d = dns.apply();
+    if (d.active) console.log('HTTP/3 直连已启用 DoH=' + d.servers.join(','));
+    else if (d.ok === false) console.warn('DoH 配置失败:', d.error);
+  } catch (e) { console.warn('dns.apply 异常', e.message); }
   await http.applyProxy();
 
   // 恢复已保存的 cookie
@@ -125,17 +137,19 @@ ipcMain.handle('app:init', async () => {
 ipcMain.handle('settings:get', () => cfg.get());
 ipcMain.handle('settings:save', async (e, patch) => {
   const s = cfg.save(patch);
-  if (patch && patch.proxy) await http.applyProxy();
-  if (patch && patch.userAgent) await http.applyProxy();
+  if (patch && (patch.proxy || patch.userAgent || patch.netMode || patch.secureDns)) {
+    try { dns.apply(); } catch (err) { console.warn('dns.apply', err.message); }
+    await http.applyProxy();
+  }
   return s;
 });
-ipcMain.handle('settings:pickDir', async (e, which) => {
-  const r = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory', 'createDirectory'] });
-  if (r.canceled || !r.filePaths.length) return null;
-  const s = cfg.save({ [which]: r.filePaths[0] });
-  return s[which];
+
+/* ---- 网络自检：确认直连（HTTP/3）是否真的通 —— 只看状态码，不猜 */
+ipcMain.handle('net:diagnose', async () => {
+  try { return await dns.diagnose(); }
+  catch (e) { return { ok: false, error: e.message, results: [] }; }
 });
-ipcMain.handle('shell:open', async (e, p) => { shell.openPath(p); return true; });
+ipcMain.handle('net:state', () => dns.config());
 
 /* ---- 登录 ---- */
 let loginSession = { active: false, profile: null, startedAt: 0 };

@@ -50,7 +50,8 @@ function nodeDownload(t, dest, tmp) {
     const isHttps = /^https:/i.test(t.url);
     const lib = isHttps ? nodeHttps : nodeHttp;
     let agent;
-    if (s.proxy && s.proxy.enabled && s.proxy.url) {
+    // 直连模式下不能给 Node 请求挂代理（否则绕过了 HTTP/3 通道）
+    if (s.netMode !== 'direct' && s.proxy && s.proxy.enabled && s.proxy.url) {
       agent = isHttps ? new HttpsProxyAgent(s.proxy.url) : new HttpProxyAgent(s.proxy.url);
     }
     const req = lib.get(t.url, {
@@ -91,8 +92,12 @@ async function run(t) {
   const dest = t.dest;
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   const tmp = dest + '.part';
-  // 优先 Node 原生下载（Electron net 对 H@H 的 ?start=1 会挂起）
+  // 直连模式下，主站域名必须走 Electron net（Node 是纯 TCP，会命中 SNI 阻断被 RST）；
+  // H@H 节点（非主站域名）仍优先 Node 原生下载 —— Electron net 对 ?start=1 会挂起。
+  const isMainSite = /^https?:\/\/([a-z0-9-]+\.)*(e-hentai|exhentai)\.org\//i.test(t.url);
+  const skipNode = s.netMode === 'direct' && isMainSite;
   try {
+    if (skipNode) throw new Error('direct-mode: 主站域名改走 Electron net(HTTP/3)');
     await nodeDownload(t, dest, tmp);
     try { if (fs.existsSync(dest)) fs.unlinkSync(dest); fs.renameSync(tmp, dest); } catch (e) { try { fs.copyFileSync(tmp, dest); fs.unlinkSync(tmp); } catch (e2) {} }
     t.status = 'done'; t.progress = 100; t.finishedAt = Date.now(); emit();

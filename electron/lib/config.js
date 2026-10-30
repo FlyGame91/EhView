@@ -4,7 +4,16 @@ const path = require('path');
 const { app } = require('electron');
 
 const DEFAULTS = {
+  // netMode: 'proxy' 走代理；'direct' 直连（启用安全 DNS，走 HTTP/3）
+  netMode: 'proxy',
   proxy: { enabled: true, url: 'http://127.0.0.1:10809' },
+  // 安全 DNS：Chromium HostResolver 的 DoH 配置。
+  // 不可用本地/国内 DoH —— 它们的递归上游被污染，返回的 A 记录是假 IP。
+  secureDns: {
+    enabled: true,
+    mode: 'secure',
+    servers: ['https://doh.cleanbrowsing.org/doh/security-filter/']
+  },
   downloadDir: '',
   imageCacheDir: '',
   cacheEnabled: true,
@@ -59,7 +68,12 @@ function load() {
   let s = { ...DEFAULTS };
   try {
     const raw = JSON.parse(fs.readFileSync(file(), 'utf8'));
-    s = { ...s, ...raw, proxy: { ...DEFAULTS.proxy, ...(raw.proxy || {}) }, reader: { ...DEFAULTS.reader, ...(raw.reader || {}) } };
+    s = {
+      ...s, ...raw,
+      proxy: { ...DEFAULTS.proxy, ...(raw.proxy || {}) },
+      reader: { ...DEFAULTS.reader, ...(raw.reader || {}) },
+      secureDns: { ...DEFAULTS.secureDns, ...(raw.secureDns || {}) }
+    };
   } catch (e) {}
   const beforeMode = s.reader && s.reader.mode;
   cache = normalizeReader(ensureDirs(s));

@@ -7,6 +7,8 @@ export default function SettingsPage({ settings, save, auth, setAuth, toast }: a
   const [loginMsg, setLoginMsg] = useState('');
   const [cookieText, setCookieText] = useState('');
   const [cache, setCache] = useState<any>(null);
+  const [diag, setDiag] = useState<any>(null);
+  const [diagBusy, setDiagBusy] = useState(false);
 
   useEffect(() => { setS(settings); }, [settings]);
   useEffect(() => { api.cacheStats().then(setCache); }, []);
@@ -17,6 +19,19 @@ export default function SettingsPage({ settings, save, auth, setAuth, toast }: a
     toast('设置已保存');
     const c = await api.cacheStats();
     setCache(c);
+  };
+
+  // 检测前必须先保存：HostResolver 的 DoH 配置只在 settings:save 之后才会重新应用
+  const runDiagnose = async () => {
+    setDiagBusy(true); setDiag(null);
+    try {
+      await save(s);
+      const r = await api.netDiagnose();
+      setDiag(r);
+    } catch (e: any) {
+      setDiag({ ok: false, error: e.message, results: [] });
+    }
+    setDiagBusy(false);
   };
 
   const startLogin = async () => {
@@ -102,14 +117,51 @@ export default function SettingsPage({ settings, save, auth, setAuth, toast }: a
       </div>
 
       <div className="section">
-        <h3>网络 / 代理</h3>
+        <h3>网络</h3>
         <div className="field">
-          <label><input type="checkbox" checked={!!s.proxy?.enabled} onChange={(e) => upd({ proxy: { ...s.proxy, enabled: e.target.checked } })} /> 启用代理</label>
+          <label>连接方式</label>
+          <div className="row" style={{ gap: 18, marginTop: 6 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input type="radio" name="netmode" checked={s.netMode !== 'direct'} onChange={() => upd({ netMode: 'proxy' })} /> 代理
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input type="radio" name="netmode" checked={s.netMode === 'direct'} onChange={() => upd({ netMode: 'direct' })} /> 直连（HTTP/3，无需代理）
+            </label>
+          </div>
         </div>
-        <div className="field">
-          <label>代理地址（支持 http:// 与 socks5://）</label>
-          <input type="text" value={s.proxy?.url || ''} onChange={(e) => upd({ proxy: { ...s.proxy, url: e.target.value } })} placeholder="http://127.0.0.1:10809 或 socks5://127.0.0.1:10808" />
-        </div>
+
+        {s.netMode !== 'direct' ? (
+          <>
+            <div className="field">
+              <label><input type="checkbox" checked={!!s.proxy?.enabled} onChange={(e) => upd({ proxy: { ...s.proxy, enabled: e.target.checked } })} /> 启用代理</label>
+            </div>
+            <div className="field">
+              <label>代理地址（支持 http:// 与 socks5://）</label>
+              <input type="text" value={s.proxy?.url || ''} onChange={(e) => upd({ proxy: { ...s.proxy, url: e.target.value } })} placeholder="http://127.0.0.1:10809 或 socks5://127.0.0.1:10808" />
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="field">
+              <label>安全 DNS（DoH）服务器</label>
+              <input type="text" value={(s.secureDns?.servers || [])[0] || ''} onChange={(e) => upd({ secureDns: { ...s.secureDns, servers: [e.target.value] } })} placeholder="https://doh.cleanbrowsing.org/doh/security-filter/" />
+            </div>
+            <div className="hint" style={{ marginTop: 6 }}>
+              直连原理：GFW 只掐 TCP 443 的 SNI，UDP 443 的 QUIC 没掐。开启后走 DoH 拿真实解析 + HTTPS 记录里的 alpn=h3，Chromium 才会切到 HTTP/3。
+              必须用<b>境外</b> DoH —— 国内阿里/腾讯 DoH 的上游同样被污染，填了等于没填。
+            </div>
+            <div className="row" style={{ marginTop: 10 }}>
+              <button className="btn primary" onClick={runDiagnose} disabled={diagBusy}>{diagBusy ? '检测中…' : '检测直连'}</button>
+            </div>
+            {diag && (
+              <div className="hint" style={{ marginTop: 10, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
+                {diag.results && diag.results.length
+                  ? diag.results.map((r: any) => r.url + ' → ' + (r.ok ? 'OK ' + r.status : 'FAIL ' + (r.error || '')) + '  ' + r.ms + 'ms' + (r.bytes ? ' / ' + fmtSize(r.bytes) : '')).join('\n')
+                  : (diag.hint || diag.error || '无结果')}
+              </div>
+            )}
+          </>
+        )}
         <div className="field">
           <label>站点</label>
           <select value={s.site} onChange={(e) => upd({ site: e.target.value })}>

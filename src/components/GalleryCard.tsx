@@ -58,7 +58,7 @@ export default function GalleryCard({ item, onClick, nav, toast }: any) {
       } else {
         await api.libAdd({
           gid: item.gid, token: item.token, title: item.title,
-          titleJpn: item.titleJpn, category: item.category, thumb: item.thumb,
+          titleJpn: item.titleJpn, category: item.category, cover: item.thumb,
           pages: item.pages, rating: item.rating, tags: item.tags, posted: item.posted,
         });
         libraryGids.add(item.gid);

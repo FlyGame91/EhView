@@ -6,10 +6,27 @@ const { app } = require('electron');
 function file() { return path.join(app.getPath('userData'), 'library.json'); }
 let data = null;
 
+/**
+ * 历史数据归一化：早期「列表卡片星标」写入的是 thumb，「详情页加入」写入的是 cover，
+ * 两种字段名并存导致本地库有 3 条封面永远空白。统一收敛到 cover，thumb 不再保留。
+ * 只在 load 时跑一次，修过就回写，避免每次启动重复迁移。
+ */
+function normalize(d) {
+  let changed = false;
+  for (const it of Object.values(d.items || {})) {
+    if (!it.cover && it.thumb) { it.cover = it.thumb; changed = true; }
+    if (it.thumb !== undefined) { delete it.thumb; changed = true; }
+  }
+  return changed;
+}
+
 function load() {
   if (data) return data;
   try { data = JSON.parse(fs.readFileSync(file(), 'utf8')); } catch (e) { data = { items: {}, tags: {} }; }
   if (!data.items) data.items = {};
+  if (normalize(data)) {
+    try { fs.writeFileSync(file(), JSON.stringify(data)); console.log('library 迁移: thumb -> cover'); } catch (e) {}
+  }
   return data;
 }
 function persist() {
@@ -22,9 +39,13 @@ function upsert(entry) {
   const d = load();
   const k = key(entry.gid);
   const prev = d.items[k] || {};
-  d.items[k] = { ...prev, ...entry, updatedAt: Date.now() };
+  const next = { ...prev, ...entry, updatedAt: Date.now() };
+  // 写入时就归一：调用方传 cover 或 thumb 都行，读侧永远只认 cover
+  next.cover = entry.cover || entry.thumb || prev.cover || '';
+  delete next.thumb;
+  d.items[k] = next;
   persist();
-  return d.items[k];
+  return next;
 }
 
 function remove(gid) {

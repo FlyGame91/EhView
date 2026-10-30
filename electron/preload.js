@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('api', {
   saveSettings: (p) => ipcRenderer.invoke('settings:save', p),
   pickDir: (which) => ipcRenderer.invoke('settings:pickDir', which),
   openPath: (p) => ipcRenderer.invoke('shell:open', p),
+  netDiagnose: () => ipcRenderer.invoke('net:diagnose'),
+  netState: () => ipcRenderer.invoke('net:state'),
 
   login: (opts) => ipcRenderer.invoke('auth:login', opts),
   pollLogin: () => ipcRenderer.invoke('auth:poll'),

@@ -1,6 +1,6 @@
 {
   "name": "ehview",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "E-Hentai/ExHentai desktop browser with cache, archive download and local tagging",
   "main": "electron/main.js",

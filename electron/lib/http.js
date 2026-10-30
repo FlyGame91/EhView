@@ -3,6 +3,27 @@ const { net, session } = require('electron');
 const cfg = require('./config');
 
 const PART = 'persist:ehmain';
+
+/**
+ * 图片域名重写。
+ *
+ * 实测（2026-10-31）：E-Hentai 的图片服务器 s.exhentai.org / s.e-hentai.org 落在 178.175.x
+ * （AlexHost 自建机，不在 Cloudflare），只能走 TCP —— 而它们的 SNI 正被墙，ClientHello 一发就 RST，
+ * 表现为「主站能打开、预览图全裂」。同一台机器上换成官方 CDN 域名 ehgt.org 的 SNI 握手正常，
+ * 且 ehgt.org 与 s.exhentai.org 是同一套存储、同一套路径，实测 4/4 图片 200 + 正确 content-type，
+ * 对 Referer 无要求。
+ */
+const IMG_HOST_MAP = { 's.exhentai.org': 'ehgt.org', 's.e-hentai.org': 'ehgt.org' };
+
+function rewriteImageHost(url) {
+  try {
+    const u = new URL(url);
+    const mapped = IMG_HOST_MAP[u.hostname];
+    if (!mapped) return url;
+    u.hostname = mapped;
+    return u.toString();
+  } catch (e) { return url; }
+}
 let ses = null;
 
 function getSession() {
@@ -13,12 +34,21 @@ function getSession() {
 async function applyProxy() {
   const s = cfg.get();
   const ses = getSession();
-  if (s.proxy && s.proxy.enabled && s.proxy.url) {
+  // 直连模式：不挂代理，交给 DoH + HTTP/3（见 lib/dns.js）
+  const direct = s.netMode === 'direct';
+  if (!direct && s.proxy && s.proxy.enabled && s.proxy.url) {
     await ses.setProxy({ proxyRules: s.proxy.url, proxyBypassRules: '<local>' });
   } else {
     await ses.setProxy({ mode: 'direct' });
   }
   ses.setUserAgent(s.userAgent, 'en-US,en;q=0.9');
+  // 直连模式切换时清掉旧分区里缓存的解析/连接状态，
+  // 否则 persist 分区会沿用之前代理模式留下的网络上下文，导致新请求仍走 TCP 被 RST
+  if (direct) {
+    try { await ses.clearHostResolverCache(); } catch (e) {}
+    try { await ses.clearCache(); } catch (e) {}
+  }
+  return { direct };
 }
 
 /** 底层请求：返回 { status, headers, body(Buffer), url } */
@@ -29,7 +59,7 @@ function request(url, opts = {}) {
     let settled = false;
     const req = net.request({
       method: opts.method || 'GET',
-      url,
+      url: rewriteImageHost(url),
       session: ses,
       useSessionCookies: true,
       redirect: opts.redirect || 'follow'
@@ -103,4 +133,4 @@ async function clearCookies() {
   }
 }
 
-module.exports = { request, text, json, setCookie, getCookies, clearCookies, getSession, applyProxy };
+module.exports = { request, text, json, setCookie, getCookies, clearCookies, getSession, applyProxy, rewriteImageHost, IMG_HOST_MAP };

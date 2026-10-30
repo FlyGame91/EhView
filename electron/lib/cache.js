@@ -79,7 +79,7 @@ function streamTo(url, dest, opts = {}) {
     const s = cfg.get();
     let done = false;
     try {
-      const req = net.request({ method: 'GET', url, session: http.getSession(), useSessionCookies: true, redirect: 'follow' });
+      const req = net.request({ method: 'GET', url: http.rewriteImageHost(url), session: http.getSession(), useSessionCookies: true, redirect: 'follow' });
       req.setHeader('User-Agent', s.userAgent);
       req.setHeader('Referer', opts.referer || 'https://e-hentai.org/');
       req.setHeader('Accept', 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8');
