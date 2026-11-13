@@ -70,6 +70,55 @@ export default function App() {
     })();
   }, []);
 
+  // 封面大小：把设置值落到根元素的 CSS 变量，.grid 的 minmax 用它
+  useEffect(() => {
+    const v = Number(settings?.cardMin) || 190;
+    document.documentElement.style.setProperty('--card-min', v + 'px');
+  }, [settings?.cardMin]);
+
+  // 整体界面缩放：设置变化时应用；Ctrl+= / Ctrl+- / Ctrl+0 快捷调整
+  useEffect(() => {
+    const z = Number(settings?.uiZoom) || 1;
+    try { (api as any).setZoom?.(z); } catch (e) {}
+  }, [settings?.uiZoom]);
+
+  useEffect(() => {
+    const onKey = async (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const cur = Number(settings?.uiZoom) || 1;
+      let next: number | null = null;
+      if (e.key === '=' || e.key === '+') next = Math.min(2, Math.round((cur + 0.1) * 100) / 100);
+      else if (e.key === '-') next = Math.max(0.5, Math.round((cur - 0.1) * 100) / 100);
+      else if (e.key === '0') next = 1;
+      if (next === null) return;
+      e.preventDefault();
+      try {
+        const s = await api.saveSettings({ uiZoom: next });
+        setSettings(s);
+      } catch (err) {}
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [settings?.uiZoom]);
+
+  // Ctrl + 滚轮：与浏览器一致，向上放大、向下缩小
+  useEffect(() => {
+    const onWheel = async (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      const cur = Number(settings?.uiZoom) || 1;
+      const dir = e.deltaY < 0 ? 1 : -1;
+      const next = Math.max(0.5, Math.min(2, Math.round((cur + dir * 0.1) * 100) / 100));
+      if (next === cur) return;
+      try {
+        const s = await api.saveSettings({ uiZoom: next });
+        setSettings(s);
+      } catch (err) {}
+    };
+    window.addEventListener('wheel', onWheel, { passive: false, capture: true });
+    return () => window.removeEventListener('wheel', onWheel, { capture: true } as any);
+  }, [settings?.uiZoom]);
+
   // 下载 / 收藏状态种子：列表卡片据此决定图标是空心还是实心
   useEffect(() => {
     const pull = async () => {

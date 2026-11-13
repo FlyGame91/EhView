@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { libraryGids } from '../lib/stores';
 import { api } from '../api';
+import GalleryCard from '../components/GalleryCard';
 
 export default function LibraryPage({ nav, toast }: any) {
   const [items, setItems] = useState<any[]>([]);
@@ -75,19 +76,9 @@ export default function LibraryPage({ nav, toast }: any) {
       {items.length === 0 && <div className="empty">本地库为空</div>}
       <div className="grid">
         {items.map((it) => (
-          <div className="card" key={it.gid}
+          <GalleryCard key={it.gid} item={{ ...it, thumb: it.cover }} nav={nav} toast={toast}
             onClick={() => nav({ name: 'gallery', gid: it.gid, token: it.token })}
-            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY, item: it }); }}>
-            {it.cover ? <img className="cover" src={api.img(it.cover)} loading="lazy" /> : <div className="cover" />}
-            <div className="meta">
-              <div className="title">{it.title}</div>
-              <div className="sub">
-                {it.category && <span className="badge">{it.category}</span>}
-                {it.pages && <span>{it.pages} 页</span>}
-                {it.lastRead ? <span>读到 {it.lastRead}</span> : null}
-              </div>
-            </div>
-          </div>
+            onContextMenu={(e: any) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY, item: it }); }} />
         ))}
       </div>
 

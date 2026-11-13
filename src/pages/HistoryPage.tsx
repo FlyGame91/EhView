@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
+import GalleryCard from '../components/GalleryCard';
 
 export default function HistoryPage({ nav, toast }: any) {
   const [items, setItems] = useState<any[]>([]);
@@ -52,21 +53,9 @@ export default function HistoryPage({ nav, toast }: any) {
       {!loading && items.length === 0 && <div className="empty">还没有浏览记录</div>}
       <div className="grid">
         {items.map((it) => (
-          <div className="card" key={it.gid} onClick={() => nav({ name: 'gallery', gid: it.gid, token: it.token })}>
-            {it.cover ? <img className="cover" src={api.img(it.cover)} loading="lazy" /> : <div className="cover" />}
-            <div className="meta">
-              <div className="title" title={it.title}>{it.title}</div>
-              <div className="sub">
-                {it.category && <span className="badge">{it.category}</span>}
-                {it.pages ? <span>{it.pages} 页</span> : null}
-                <span>{fmt(it.lastVisit)}</span>
-                {it.visits > 1 ? <span>看过 {it.visits} 次</span> : null}
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <button className="btn sm" onClick={(e) => del(it.gid, e)} title="删除记录并清除该画册缓存">删除</button>
-              </div>
-            </div>
-          </div>
+          <GalleryCard key={it.gid} item={{ ...it, thumb: it.cover }} nav={nav} toast={toast}
+            onClick={() => nav({ name: 'gallery', gid: it.gid, token: it.token })}
+            extra={<div style={{ display: 'flex', justifyContent: 'flex-end' }}><button className="btn sm" onClick={(e) => del(it.gid, e)} title="删除记录并清除该画册缓存">删除</button></div>} />
         ))}
       </div>
     </div>

@@ -1,13 +1,43 @@
-import React, { useState, useSyncExternalStore } from 'react';
+import React, { useRef, useState, useSyncExternalStore } from 'react';
 import { api, GalleryItem } from '../api';
 import { downloadGids, libraryGids } from '../lib/stores';
+import HoverPreview from './HoverPreview';
 
 const catClass = (c: any) => 'badge c-' + String(c || '').replace(/[^a-zA-Z]/g, '');
 
-export default function GalleryCard({ item, onClick, nav, toast }: any) {
+export default function GalleryCard({ item, onClick, nav, toast, onContextMenu, extra }: any) {
   const cover = item.thumb ? api.img(item.thumb) : '';
   const downloading = useSyncExternalStore(downloadGids.subscribe, () => downloadGids.has(item.gid));
   const inLib = useSyncExternalStore(libraryGids.subscribe, () => libraryGids.has(item.gid));
+
+  // 悬停预览：进入 1000ms 后弹出，位置在弹出瞬间固定；离开后 400ms 关闭（留时间把鼠标移进预览框）
+  // 注意：弹出后不能再跟随鼠标更新 anchor，否则面板会跟着鼠标跑、鼠标永远进不去，且跨间隙时触发 onMouseLeave
+  const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
+  const [hoverOn, setHoverOn] = useState(false);
+  const enterTimer = useRef<any>(null);
+  const leaveTimer = useRef<any>(null);
+  const lastPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  const cancelLeave = () => { if (leaveTimer.current) { clearTimeout(leaveTimer.current); leaveTimer.current = null; } };
+  const scheduleClose = () => {
+    cancelLeave();
+    leaveTimer.current = setTimeout(() => { setHoverPos(null); setHoverOn(false); }, 400);
+  };
+  const onCardEnter = (e: any) => {
+    if (asking) return;
+    cancelLeave();
+    lastPos.current = { x: e.clientX, y: e.clientY };
+    if (enterTimer.current) clearTimeout(enterTimer.current);
+    enterTimer.current = setTimeout(() => { setHoverPos(lastPos.current); setHoverOn(true); }, 1000);
+  };
+  const onCardMove = (e: any) => {
+    // 只记录，不 setState：面板一旦弹出就固定在弹出位置
+    lastPos.current = { x: e.clientX, y: e.clientY };
+  };
+  const onCardLeave = () => {
+    if (enterTimer.current) { clearTimeout(enterTimer.current); enterTimer.current = null; }
+    scheduleClose();
+  };
 
   const [asking, setAsking] = useState(false);
   const [cost, setCost] = useState<any>(null);
@@ -68,7 +98,11 @@ export default function GalleryCard({ item, onClick, nav, toast }: any) {
   };
 
   return (
-    <div className="card" onClick={onClick}>
+    <div className="card" onClick={onClick}
+      onMouseEnter={onCardEnter}
+      onMouseMove={onCardMove}
+      onMouseLeave={onCardLeave}
+      onContextMenu={onContextMenu}>
       {cover ? <img className="cover" src={cover} loading="lazy" /> : <div className="cover" />}
 
       <button
@@ -101,6 +135,16 @@ export default function GalleryCard({ item, onClick, nav, toast }: any) {
         </div>
       )}
 
+      {hoverOn && hoverPos && (
+        <HoverPreview
+          gid={item.gid}
+          token={item.token}
+          anchor={hoverPos}
+          onEnter={cancelLeave}
+          onLeave={scheduleClose}
+        />
+      )}
+
       <div className="meta">
         <div className="title" title={item.title}>{item.title}</div>
         <div className="sub">
@@ -108,6 +152,7 @@ export default function GalleryCard({ item, onClick, nav, toast }: any) {
           {item.pages && <span>{item.pages} 页</span>}
           {item.rating && <span>★ {item.rating}</span>}
         </div>
+        {extra}
       </div>
     </div>
   );

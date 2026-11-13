@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('api', {
   init: () => ipcRenderer.invoke('app:init'),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (p) => ipcRenderer.invoke('settings:save', p),
+  setZoom: (f) => ipcRenderer.invoke('ui:setZoom', f),
   pickDir: (which) => ipcRenderer.invoke('settings:pickDir', which),
   openPath: (p) => ipcRenderer.invoke('shell:open', p),
   netDiagnose: () => ipcRenderer.invoke('net:diagnose'),
@@ -40,6 +41,8 @@ contextBridge.exposeInMainWorld('api', {
   libSetRead: (gid, index, total) => ipcRenderer.invoke('lib:setread', gid, index, total),
   libOpenCacheDir: (gid) => ipcRenderer.invoke('lib:openCacheDir', gid),
   saveImage: (payload) => ipcRenderer.invoke('image:saveAs', payload),
+  copyImage: (payload) => ipcRenderer.invoke('image:copy', payload),
+  copyImageBuffer: (arr) => ipcRenderer.invoke('image:copyBuffer', arr),
 
   dlList: () => ipcRenderer.invoke('dl:list'),
   dlArchive: (payload) => ipcRenderer.invoke('dl:archive', payload),
@@ -50,6 +53,14 @@ contextBridge.exposeInMainWorld('api', {
   dlClear: () => ipcRenderer.invoke('dl:clear'),
   onDownload: (cb) => { const h = (e, list) => cb(list); ipcRenderer.on('dl:update', h); return () => ipcRenderer.removeListener('dl:update', h); },
   onStatsRefresh: (cb) => { const h = () => cb(); ipcRenderer.on('stats:refresh', h); return () => ipcRenderer.removeListener('stats:refresh', h); },
+  onImgProgress: (cb) => { const h = (e, d) => cb(d); ipcRenderer.on('img:progress', h); return () => ipcRenderer.removeListener('img:progress', h); },
+
+  savedTags: () => ipcRenderer.invoke('saved:listTags'),
+  savedAddTag: (t) => ipcRenderer.invoke('saved:addTag', t),
+  savedRemoveTag: (t) => ipcRenderer.invoke('saved:removeTag', t),
+  savedSearches: () => ipcRenderer.invoke('saved:listSearches'),
+  savedAddSearch: (s) => ipcRenderer.invoke('saved:addSearch', s),
+  savedRemoveSearch: (id) => ipcRenderer.invoke('saved:removeSearch', id),
 
   historyRecord: (entry) => ipcRenderer.invoke('history:record', entry),
   historyList: (limit) => ipcRenderer.invoke('history:list', limit),

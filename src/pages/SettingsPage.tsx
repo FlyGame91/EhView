@@ -274,6 +274,26 @@ export default function SettingsPage({ settings, save, auth, setAuth, toast }: a
           <input type="number" min={1} max={10} value={s.reader?.preload ?? 3}
             onChange={(e) => upd({ reader: { ...s.reader, preload: parseInt(e.target.value, 10) || 3 } })}
             style={{ width: 70, background: 'var(--bg-3)', border: '1px solid var(--line)', borderRadius: 8, padding: '6px 10px' }} />
+          <label className="hint">界面缩放</label>
+          <select value={String(s.uiZoom ?? 1)} onChange={(e) => upd({ uiZoom: Number(e.target.value) || 1 })}
+            style={{ background: 'var(--bg-3)', border: '1px solid var(--line)', borderRadius: 8, padding: '6px 10px' }}>
+            <option value="0.8">80%（一屏更多）</option>
+            <option value="0.9">90%</option>
+            <option value="1">100%（默认）</option>
+            <option value="1.1">110%</option>
+            <option value="1.25">125%</option>
+            <option value="1.5">150%</option>
+            <option value="2">200%（放大看）</option>
+          </select>
+          <label className="hint">封面大小</label>
+          <select value={s.cardMin || 190} onChange={(e) => upd({ cardMin: parseInt(e.target.value, 10) || 190 })}
+            style={{ background: 'var(--bg-3)', border: '1px solid var(--line)', borderRadius: 8, padding: '6px 10px' }}>
+            <option value={130}>小（一屏看更多）</option>
+            <option value={170}>偏小</option>
+            <option value={190}>中（默认）</option>
+            <option value={240}>大</option>
+            <option value={300}>特大（放大看）</option>
+          </select>
         </div>
       </div>
 

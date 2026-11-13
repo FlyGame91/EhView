@@ -133,4 +133,34 @@ async function clearCookies() {
   }
 }
 
-module.exports = { request, text, json, setCookie, getCookies, clearCookies, getSession, applyProxy, rewriteImageHost, IMG_HOST_MAP };
+/** 把 session 里最新的站点 cookie 回写到 settings.json（带 expirationDate），让续期结果持久化 */
+async function syncCookiesToConfig() {
+  try {
+    const ses = getSession();
+    const all = await ses.cookies.get({});
+    const KEEP = /^(ipb_member_id|ipb_pass_hash|igneous|cf_clearance|sk|hath_perks|yay)$/;
+    const byDomain = {};
+    for (const c of all) {
+      const d = c.domain || '';
+      if (!/e-hentai\.org|exhentai\.org/i.test(d)) continue;
+      if (!KEEP.test(c.name)) continue;
+      (byDomain[d] = byDomain[d] || []).push({
+        domain: c.domain,
+        name: c.name,
+        value: c.value,
+        path: c.path || '/',
+        secure: c.secure !== false,
+        httpOnly: c.httpOnly !== false,
+        expirationDate: c.expirationDate || null,
+      });
+    }
+    const domains = Object.keys(byDomain);
+    if (domains.length) {
+      cfg.save({ cookies: byDomain });
+      return domains;
+    }
+  } catch (e) { console.warn('syncCookiesToConfig fail', e.message); }
+  return null;
+}
+
+module.exports = { request, text, json, setCookie, getCookies, clearCookies, getSession, applyProxy, rewriteImageHost, IMG_HOST_MAP, syncCookiesToConfig };

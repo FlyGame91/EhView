@@ -14,6 +14,7 @@ export default function GalleryPage({ gid, token, nav, toast, settings, listRetu
   const [archiveRes, setArchiveRes] = useState('org');
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [archiveCost, setArchiveCost] = useState<any>(null);
+  const [savedTagSet, setSavedTagSet] = useState<Set<string>>(new Set());
   const [torrents, setTorrents] = useState<any>(null);
   const [showTorrents, setShowTorrents] = useState(false);
   const [thumbs, setThumbs] = useState<any[]>([]);
@@ -76,6 +77,32 @@ export default function GalleryPage({ gid, token, nav, toast, settings, listRetu
   };
 
   useEffect(() => { load(); }, [gid, token]);
+
+  // 已收藏的标签集合（用于把 ☆ 画成 ★）
+  useEffect(() => {
+    api.savedTags().then((a: any[]) => setSavedTagSet(new Set((a || []).map((x: any) => String(x.tag).toLowerCase())))).catch(() => {});
+  }, []);
+
+  const toggleSavedTag = async (tag: string) => {
+    const has = savedTagSet.has(tag.toLowerCase());
+    const next = has ? await api.savedRemoveTag(tag) : await api.savedAddTag(tag);
+    setSavedTagSet(new Set((next || []).map((x: any) => String(x.tag).toLowerCase())));
+    toast(has ? '已取消收藏「' + tag + '」' : '已收藏标签「' + tag + '」');
+  };
+
+  // ESC 返回上一级列表（焦点在输入框时让浏览器自己处理，不抢键）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const el = e.target as HTMLElement | null;
+      const tag = el ? el.tagName : '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (el && el.isContentEditable)) return;
+      e.preventDefault();
+      nav(listReturn || { name: 'search', query: '' });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [listReturn, nav]);
 
   // 记住滚动位置 + 缩略图增量，返回时原样还原（否则就算不转圈也会跳回顶部）
   useEffect(() => {
@@ -174,6 +201,20 @@ export default function GalleryPage({ gid, token, nav, toast, settings, listRetu
 
   const backToList = () => nav(listReturn || { name: 'search', query: '' });
 
+  // 按图集标题搜索不同翻译版本：去掉 [社团]/[语言]/(原作) 等方括号内容，用引号精确匹配标题
+  // 不加 language: 过滤——要的是所有语言/汉化组的同名版本，包括同语言的其它汉化组
+  const searchTranslations = () => {
+    const raw = String(d.titleJpn || d.title || '');
+    const core = raw
+      .replace(/\[[^\]]*\]/g, ' ')
+      .replace(/【[^】]*】/g, ' ')
+      .replace(/\([^)]*\)/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!core) { toast('标题为空，无法搜索'); return; }
+    nav({ name: 'search', query: '"' + core.replace(/"/g, '') + '"' });
+  };
+
   return (
     <div className="page">
       <div className="crumb">
@@ -217,13 +258,20 @@ export default function GalleryPage({ gid, token, nav, toast, settings, listRetu
               <option value="res">重新采样（较小）</option>
             </select>
             <button className="btn" onClick={loadTorrents}>种子 / 做种情况</button>
+            <button className="btn" onClick={searchTranslations} title="按标题搜索其他语言/汉化版本（排除当前语言）">🌐 找其他翻译</button>
             {local ? <button className="btn" onClick={removeLocal}>★ 已在本地库</button> : <button className="btn" onClick={addLocal}>☆ 加入本地库</button>}
           </div>
 
           <div className="tags">
             {(d.tags || []).map((t: any) => (
-              <span key={t.name} className={'tag ns'} title={t.strength}
-                onClick={() => nav({ name: 'search', query: t.name })}>{t.name}</span>
+              <span key={t.name} className={'tag ns'} title={t.strength}>
+                <span className="tag-name" onClick={() => nav({ name: 'search', query: t.name })}>{t.name}</span>
+                <button
+                  className={'tag-star' + (savedTagSet.has(String(t.name).toLowerCase()) ? ' on' : '')}
+                  title={savedTagSet.has(String(t.name).toLowerCase()) ? '取消收藏这个标签' : '收藏这个标签'}
+                  onClick={(e) => { e.stopPropagation(); toggleSavedTag(t.name); }}
+                >{savedTagSet.has(String(t.name).toLowerCase()) ? '★' : '☆'}</button>
+              </span>
             ))}
           </div>
         </div>

@@ -222,6 +222,10 @@ function partitionDir(name) {
 function preparePartition(name = 'persist:ehmain') {
   const c = config();
   if (c.netMode !== 'direct' || !c.enabled) return { cleaned: false, reason: 'not-direct' };
+  // 每次直连启动都必须清。
+  // 曾试过「只清一次」以保留 QUIC 的 0-RTT/会话复用状态，结果**反而更差**：
+  // 残留的 server info 会让客户端去复用已经失效的会话，实测搜索从 1s 劣化到 15~45s。
+  // 冷握手那 600ms 是必须付的成本，换不来稳定。
   try {
     const dir = path.join(partitionDir(name), 'Network');
     const f = path.join(dir, 'Network Persistent State');

@@ -85,9 +85,17 @@ function streamTo(url, dest, opts = {}) {
       req.setHeader('Accept', 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8');
       req.on('response', (res) => {
         if (res.statusCode >= 400) { done = true; resolve(false); return; }
+        const total = parseInt(res.headers['content-length'] || '0', 10);
+        let received = 0;
         const out = fs.createWriteStream(dest);
-        res.pipe(out);
-        out.on('finish', () => { done = true; out.close(() => resolve(true)); });
+        // 手动转发数据块，顺便把进度回调出去（pipe 拿不到中间字节数）
+        res.on('data', (chunk) => {
+          received += chunk.length;
+          out.write(chunk);
+          if (opts.onProgress) { try { opts.onProgress(received, total); } catch (e) {} }
+        });
+        res.on('end', () => { out.end(); });
+        out.on('finish', () => { done = true; out.close(() => { if (opts.onProgress) { try { opts.onProgress(received, total || received); } catch (e) {} } resolve(true); }); });
         out.on('error', () => { done = true; resolve(false); });
         res.on('error', () => { done = true; resolve(false); });
       });

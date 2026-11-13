@@ -1,7 +1,7 @@
 'use strict';
 const path = require('path');
 const fs = require('fs');
-const { app, BrowserWindow, ipcMain, protocol, session, shell, dialog, Menu, net } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol, session, shell, dialog, Menu, net, clipboard, nativeImage, ClipboardItem } = require('electron');
 
 const cfg = require('./lib/config');
 const http = require('./lib/http');
@@ -12,6 +12,14 @@ const cache = require('./lib/cache');
 const download = require('./lib/download');
 const library = require('./lib/library');
 const history = require('./lib/history');
+const saved = require('./lib/saved');
+
+// webp 等格式 nativeImage 解不了（实测 fromPath/fromBuffer 均 isEmpty），用 sharp 转 PNG
+let sharp = null;
+try { sharp = require('sharp'); } catch (e) {
+  try { fs.appendFileSync('D:\\EhView\\_probe\\copy-debug.log', new Date().toISOString() + ' sharp require ERR ' + e.message + '\n' + (e.stack || '').split('\n').slice(0, 5).join('\n') + '\n'); } catch (err) {}
+  console.warn('sharp 不可用，webp 复制功能将不可用:', e.message);
+}
 
 app.setName('EhView');
 const isDev = process.env.EHV_DEV === '1';
@@ -67,6 +75,19 @@ app.whenReady().then(async () => {
     }
   } catch (e) { console.warn('restore cookies', e.message); }
 
+  // 启动续期：访问一次需要登录的页面，让站点重发 sk / hath_perks；再访问 ExHentai 刷新 igneous
+  // 完成后把 session 里最新的 cookie（含 expirationDate）写回 settings.json
+  if (s.loggedIn) {
+    (async () => {
+      try {
+        const r = await eh.renewCookies();
+        console.log('cookie 续期:', JSON.stringify(r));
+        const domains = await http.syncCookiesToConfig();
+        if (domains) console.log('cookie 已回写:', domains.join(','));
+      } catch (e) { console.warn('cookie 续期失败:', e.message); }
+    })();
+  }
+
   // ehimg 协议：图片走本地缓存
   protocol.handle('ehimg', async (request) => {
     try {
@@ -81,7 +102,7 @@ app.whenReady().then(async () => {
         if (!fs.existsSync(fp)) return new Response('miss', { status: 404 });
         const buf = fs.readFileSync(fp);
         const mm = ext === '.png' ? 'image/png' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
-        return new Response(buf, { status: 200, headers: { 'Content-Type': mm, 'Cache-Control': 'public, max-age=31536000' } });
+        return new Response(buf, { status: 200, headers: { 'Content-Type': mm, 'Cache-Control': 'public, max-age=31536000', 'Access-Control-Allow-Origin': '*' } });
       }
       const target = u.searchParams.get('url');
       const gid = u.searchParams.get('gid') || '';
@@ -89,14 +110,17 @@ app.whenReady().then(async () => {
       if (!cfg.get().cacheEnabled) {
         // 直接代理
         const r = await http.request(target, { referer: 'https://e-hentai.org/' });
-        return new Response(r.body, { status: r.status, headers: { 'Content-Type': r.headers['content-type'] || 'image/jpeg' } });
+        return new Response(r.body, { status: r.status, headers: { 'Content-Type': r.headers['content-type'] || 'image/jpeg', 'Access-Control-Allow-Origin': '*' } });
       }
-      const p = await cache.ensure(target, { referer: 'https://e-hentai.org/', gid });
+      const p = await cache.ensure(target, {
+        referer: 'https://e-hentai.org/', gid,
+        onProgress: (received, total) => send('img:progress', { url: target, received, total }),
+      });
       if (!p) return new Response('fetch failed', { status: 502 });
       const data = fs.readFileSync(p);
       const ext = path.extname(p).toLowerCase();
       const mime = ext === '.png' ? 'image/png' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
-      return new Response(data, { status: 200, headers: { 'Content-Type': mime, 'Cache-Control': 'public, max-age=31536000' } });
+      return new Response(data, { status: 200, headers: { 'Content-Type': mime, 'Cache-Control': 'public, max-age=31536000', 'Access-Control-Allow-Origin': '*' } });
     } catch (e) {
       return new Response('err: ' + e.message, { status: 500 });
     }
@@ -153,6 +177,16 @@ ipcMain.handle('settings:save', async (e, patch) => {
     await http.applyProxy();
   }
   return s;
+});
+
+// 整体界面缩放（等价于浏览器 Ctrl+滚轮）：作用于当前窗口的 webContents
+ipcMain.handle('ui:setZoom', (e, f) => {
+  try {
+    const w = BrowserWindow.fromWebContents(e.sender);
+    const n = Math.max(0.5, Math.min(2, Number(f) || 1));
+    if (w) w.webContents.setZoomFactor(n);
+    return n;
+  } catch (err) { return 1; }
 });
 
 /* ---- 网络自检：确认直连（HTTP/3）是否真的通 —— 只看状态码，不猜 */
@@ -351,6 +385,14 @@ ipcMain.handle('eh:favorites', async (e, page, cursor) => { try { return { ok: t
 ipcMain.handle('eh:addfav', async (e, gid, token, cat, note) => { try { return { ok: true, data: await eh.addFavorite(gid, token, cat, note) }; } catch (err) { return { ok: false, error: err.message }; } });
 ipcMain.handle('eh:removefav', async (e, gid, token) => { try { return { ok: true, data: await eh.removeFavorite(gid, token) }; } catch (err) { return { ok: false, error: err.message }; } });
 
+/* ---- 标签收藏 / 搜索条件收藏 ---- */
+ipcMain.handle('saved:listTags', () => saved.listTags());
+ipcMain.handle('saved:addTag', (e, t) => saved.addTag(t));
+ipcMain.handle('saved:removeTag', (e, t) => saved.removeTag(t));
+ipcMain.handle('saved:listSearches', () => saved.listSearches());
+ipcMain.handle('saved:addSearch', (e, s) => saved.addSearch(s));
+ipcMain.handle('saved:removeSearch', (e, id) => saved.removeSearch(id));
+
 /* ---- 浏览历史 ---- */
 ipcMain.handle('history:record', async (e, entry) => {
   try {
@@ -408,8 +450,63 @@ ipcMain.handle('lib:openCacheDir', async (e, gid) => {
 });
 
 /* ---- 阅读器：把当前页另存为 ---- */
-ipcMain.handle('image:saveAs', async (e, payload) => {
+// 复制 PNG/JPEG 字节到剪贴板（渲染进程已把 webp 转好 PNG 时走这里）
+ipcMain.handle('image:copyBuffer', async (e, arr) => {
   try {
+    const buf = Buffer.from(arr);
+    const img = nativeImage.createFromBuffer(buf);
+    if (img.isEmpty()) return { ok: false, error: '图片解码失败' };
+    clipboard.writeImage(img);
+    return { ok: true };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+// 复制当前页图片到系统剪贴板（优先读本地缓存，未命中再下载）
+ipcMain.handle('image:copy', async (e, payload) => {
+  const copyLog = (m) => { try { fs.appendFileSync('D:\\EhView\\_probe\\copy-debug.log', new Date().toISOString() + ' ' + m + '\n'); } catch (err) {} };
+  try {
+    const { gid, key, ext, src } = payload || {};
+    copyLog('enter gid=' + gid + ' key=' + key + ' ext=' + ext + ' src=' + (src ? src.slice(0, 80) : ''));
+    const g = String(gid || '').replace(/[^0-9]/g, '');
+    let file = '';
+    if (key && /^[0-9a-f]{40}$/.test(String(key))) {
+      const fp = cache.pathOfKey(String(key), ext || '.jpg', g);
+      if (fs.existsSync(fp) && fs.statSync(fp).size > 0) file = fp;
+    }
+    if (!file && src) {
+      const fp = cache.pathOf(src, g);
+      if (fs.existsSync(fp) && fs.statSync(fp).size > 0) file = fp;
+      else { const got = await cache.ensure(src, { gid: g }); if (got) file = got; }
+    }
+    copyLog('file=' + file + ' size=' + (file ? fs.statSync(file).size : 0) + ' sharp=' + !!sharp);
+    if (!file) return { ok: false, error: '找不到图片（缓存未命中且下载失败）' };
+    let buf = fs.readFileSync(file);
+    let png = buf;
+    if (sharp) {
+      try { png = await sharp(buf).png().toBuffer(); } catch (e) { copyLog('sharp ERR ' + e.message); png = buf; }
+    }
+    // 写入前校验：必须是真正的 PNG/JPEG，否则 clipboard 会静默写入无效数据
+    const sig = png.slice(0, 4).toString('hex');
+    const isPng = sig === '89504e47';
+    const isJpg = sig.startsWith('ffd8');
+    copyLog('png sig=' + sig + ' bytes=' + png.length + ' ok=' + (isPng || isJpg));
+    if (!isPng && !isJpg) {
+      return { ok: false, error: '图片格式无法转换（sharp 不可用，webp 转码失败）' };
+    }
+    // Electron 45 的 clipboard 只有 write(ClipboardItem[])（无 writeImage）
+    if (typeof clipboard.write === 'function' && typeof ClipboardItem === 'function') {
+      const blob = new Blob([png], { type: 'image/png' });
+      await clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      return { ok: true };
+    }
+    const img = nativeImage.createFromBuffer(png);
+    if (img.isEmpty()) return { ok: false, error: '图片解码失败' };
+    if (typeof clipboard.writeImage === 'function') { clipboard.writeImage(img); return { ok: true }; }
+    return { ok: false, error: '当前 Electron 版本不支持写图片剪贴板' };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+ipcMain.handle('image:saveAs', async (e, payload) => {  try {
     const { gid, key, ext, src, index, title } = payload || {};
     const g = String(gid || '').replace(/[^0-9]/g, '');
     let file = '';

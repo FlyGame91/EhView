@@ -6,6 +6,7 @@ const { app } = require('electron');
 const DEFAULTS = {
   // netMode: 'proxy' 走代理；'direct' 直连（启用安全 DNS，走 HTTP/3）
   netMode: 'proxy',
+  lastNetMode: '',
   proxy: { enabled: true, url: 'http://127.0.0.1:10809' },
   // 安全 DNS：Chromium HostResolver 的 DoH 配置。
   // 不可用本地/国内 DoH —— 它们的递归上游被污染，返回的 A 记录是假 IP。
@@ -20,6 +21,8 @@ const DEFAULTS = {
   cacheLimitMB: 16384,
   historyLimit: 200,
   concurrency: 4,
+  cardMin: 190,
+  uiZoom: 1,
   site: 'e-hentai',
   userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36',
   cookies: {},

@@ -45,6 +45,8 @@ export default function SearchPage({ route, nav, toast, settings }: any) {
   // 关闭站点软过滤（官方 Disable Filters：f_sft/f_sfu/f_sfl）+ 本地 AI 兜底
   const [noFilter, setNoFilter] = useState<boolean>(() => (lastFilter.query === (route.query || '') ? !!lastFilter.noFilter : false));
   const hideAI = !noFilter;
+  const [savedSearches, setSavedSearches] = useState<any[]>([]);
+  const [savedTags, setSavedTags] = useState<any[]>([]);
   const [fCats, setFCats] = useState<number>(() => (lastFilter.query === (route.query || '') ? lastFilter.fCats : 0));   // 要排除的分类掩码（官方 f_cats）
   const busyRef = useRef(false);
   const nextRef = useRef('');
@@ -122,6 +124,32 @@ export default function SearchPage({ route, nav, toast, settings }: any) {
 
   useEffect(() => { lastFilter = { query: route.query || '', fCats, noFilter }; }, [route.query, fCats, noFilter]);
 
+  // 收藏夹：标签收藏 / 搜索条件收藏
+  useEffect(() => {
+    (api as any).savedSearches?.().then((a: any[]) => setSavedSearches(a || [])).catch(() => {});
+    (api as any).savedTags?.().then((a: any[]) => setSavedTags(a || [])).catch(() => {});
+  }, []);
+
+  const saveThisSearch = async () => {
+    const a = await (api as any).savedAddSearch({ query: route.query || '', fCats, noFilter });
+    setSavedSearches(a || []);
+    toast && toast('已收藏当前搜索条件');
+  };
+  const dropSearch = async (id: string) => {
+    const a = await (api as any).savedRemoveSearch(id);
+    setSavedSearches(a || []);
+  };
+  const dropTag = async (tag: string) => {
+    const a = await (api as any).savedRemoveTag(tag);
+    setSavedTags(a || []);
+  };
+  /** 应用一条收藏：设置筛选并跳转搜索 */
+  const applySaved = (v: any) => {
+    setFCats(Number(v.fCats) || 0);
+    setNoFilter(!!v.noFilter);
+    nav({ name: 'search', query: v.query || '' });
+  };
+
   const loadMore = () => {
     if (nextRef.current && !busyRef.current) fetchPage({ cursor: nextRef.current }, true);
   };
@@ -152,6 +180,28 @@ export default function SearchPage({ route, nav, toast, settings }: any) {
           onClick={() => setNoFilter((v) => !v)}
           title="关闭站点的标签/上传者/语言软过滤（f_sft/f_sfu/f_sfl），同时显示本地隐藏的 AI 图"
         >{noFilter ? '⚠ 过滤已关闭' : '✓ 过滤生效中'}</button>
+      </div>
+
+      <div className="saved-bar">
+        <button className="btn sm" onClick={saveThisSearch} title="把当前的搜索词与筛选条件存起来">☆ 收藏此搜索</button>
+        {savedSearches.length > 0 && <>
+          <span className="sb-label">已存搜索</span>
+          {savedSearches.map((v: any) => (
+            <span key={v.id} className="saved-chip search-chip" title={v.query || '(空搜索)'} onClick={() => applySaved(v)}>
+              {v.label || v.query || '(空搜索)'}
+              <b className="x" onClick={(e) => { e.stopPropagation(); dropSearch(v.id); }}>✕</b>
+            </span>
+          ))}
+        </>}
+        {savedTags.length > 0 && <>
+          <span className="sb-label">收藏标签</span>
+          {savedTags.map((t: any) => (
+            <span key={t.tag} className="saved-chip tag-chip" title={'搜索 ' + t.tag} onClick={() => applySaved({ query: t.tag, fCats: 0, noFilter: false })}>
+              {t.tag}
+              <b className="x" onClick={(e) => { e.stopPropagation(); dropTag(t.tag); }}>✕</b>
+            </span>
+          ))}
+        </>}
       </div>
 
       {loading && <div style={{ padding: 40 }}><div className="spinner" /></div>}

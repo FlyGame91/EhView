@@ -25,6 +25,12 @@ export default function ReaderPage({ gid, token, startIndex, title, nav, toast, 
   const [sbPage, setSbPage] = useState(0);
   const [sbBusy, setSbBusy] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
+  const [retryTick, setRetryTick] = useState(0);    // 用于强制重新拉取当前页
+  const [retryCount, setRetryCount] = useState(0);  // 当前页已自动重试次数
+  const [imgLoading, setImgLoading] = useState(false);
+  // 当前这张图的下载进度（主进程在 ehimg:// 下载过程中推送）
+  const [dlProgress, setDlProgress] = useState<{ received: number; total: number } | null>(null);
+  const imgSrcRef = useRef('');
   const sbRef = useRef<HTMLDivElement>(null);
   const sbBusyRef = useRef(false);
 
@@ -67,6 +73,32 @@ export default function ReaderPage({ gid, token, startIndex, title, nav, toast, 
     else loadSb(0, true);
   }, [gid, token, loadSb]);
 
+  /** 强制重新加载当前页：清掉内存里的解析结果再重拉（缓存文件缺失/链接过期时用） */
+  const reloadCurrent = useCallback(() => {
+    const i = idxRef.current;
+    cacheRef.current.delete(i);
+    setCur(null);
+    setImgErr('');
+    setRetryCount(0);
+    setRetryTick((t) => t + 1);
+  }, []);
+
+  // 换页/换图源时重置加载态
+  useEffect(() => { setImgLoading(true); }, [idx, retryTick]);
+
+  // 监听图片下载进度：只认当前显示的那张（按 URL 匹配）
+  useEffect(() => {
+    setDlProgress(null);
+    const off = (api as any).onImgProgress?.((d: any) => {
+      if (!d || !d.url) return;
+      const enc = encodeURIComponent(d.url);
+      if (imgSrcRef.current && imgSrcRef.current.includes(enc)) {
+        setDlProgress({ received: d.received || 0, total: d.total || 0 });
+      }
+    });
+    return () => { try { off && off(); } catch (e) {} };
+  }, [idx]);
+
   const fetchPage = useCallback(async (i: number) => {
     if (i < 0 || i >= pages.length) return;
     // 缓存命中也要确认「这就是当前页」——快速翻页时旧页的缓存不能覆盖新页
@@ -80,14 +112,14 @@ export default function ReaderPage({ gid, token, startIndex, title, nav, toast, 
       if (r.ok) {
         cacheRef.current.set(i, { ...r.data, idx: i });
         // 只有请求回来时仍停留在这一页，才允许上屏（防止后发先至的旧请求覆盖）
-        if (i === idxRef.current) setCur(r.data);
+        if (i === idxRef.current) setCur({ ...r.data, idx: i });
       } else if (i === idxRef.current) {
         setImgErr(r.error);
       }
     } catch (e: any) { if (i === idxRef.current) setImgErr(e.message); }
   }, [pages, gid]);
 
-  useEffect(() => { if (pages.length) fetchPage(idx); }, [idx, pages]);
+  useEffect(() => { if (pages.length) fetchPage(idx); }, [idx, pages, retryTick]);
 
   // 预载：解析后续页的图片地址，并让主进程把图片真正落盘到缓存
   // 旧实现只解析 URL、不下图片，翻页时仍然要现下，等于没预载
@@ -153,6 +185,7 @@ export default function ReaderPage({ gid, token, startIndex, title, nav, toast, 
   const go = useCallback((n: number) => {
     if (n < 0 || n >= pages.length) return;
     idxRef.current = n;      // 立刻生效，避免并发请求用旧页判断
+    setRetryCount(0);
     setIdx(n);
     setCur((c: any) => (c && c.idx === n ? c : null));   // 清掉不属于新页的画面
     setImgErr('');
@@ -170,10 +203,45 @@ export default function ReaderPage({ gid, token, startIndex, title, nav, toast, 
       else if (e.key === 'f' || e.key === 'F') { toggleFullscreen(); }
       else if (e.key === 'w' || e.key === 'W') { chooseMode(((() => { const order = ['fit', 'height', 'width', 'orig']; return order[(order.indexOf(mode) + 1) % order.length]; })())); }
       else if (e.key === ' ') { e.preventDefault(); step(1); }
+      else if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+        e.preventDefault();
+        const c = cacheRef.current.get(idx);
+        if (!c) { toast('当前页还没加载完成'); return; }
+        (async () => {
+          try {
+            // 1) 原图字节直传：PNG/JPEG 主进程可直接解码
+            const r0 = await api.copyImage({ gid, key: c.local ? c.key : '', ext: c.local ? c.ext : '', src: c.local ? '' : (c.src || '') });
+            if (r0 && r0.ok) { toast('已复制图片到剪贴板'); return; }
+            // 主进程失败：直接把真实原因抛出来（不再用 canvas 兜底掩盖）
+            toast('复制失败：' + ((r0 && r0.error) || '未知错误'));
+            return;
+            // 2) webp 等主进程解不了的格式：渲染进程用 Chromium 解码后转 PNG
+            const url = c.local ? api.imgKey(c.key, c.ext, gid) : api.img(c.src, gid);
+            const im = new Image();
+            im.crossOrigin = 'anonymous';
+            await new Promise<void>((res, rej) => {
+              im.onload = () => res();
+              im.onerror = () => rej(new Error('图片加载失败'));
+              im.src = url;
+            });
+            const canvas = document.createElement('canvas');
+            canvas.width = im.naturalWidth; canvas.height = im.naturalHeight;
+            const g2d = canvas.getContext('2d');
+            if (!g2d) throw new Error('canvas 不可用');
+            g2d.drawImage(im, 0, 0);
+            const png = await new Promise<Blob>((res, rej) => canvas.toBlob((b) => b ? res(b) : rej(new Error('canvas 导出失败')), 'image/png'));
+            const buf = await png.arrayBuffer();
+            const r = await api.copyImageBuffer(buf);
+            toast(r && r.ok ? '已复制图片到剪贴板' : ('复制失败：' + ((r && r.error) || '未知错误')));
+          } catch (err: any) {
+            toast('复制失败：' + err.message);
+          }
+        })();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [idx, pages.length, go]);
+  }, [idx, pages.length, go, cur]);
 
   // 切换缩放模式并持久化到设置
   const chooseMode = (m: any) => {
@@ -219,6 +287,9 @@ export default function ReaderPage({ gid, token, startIndex, title, nav, toast, 
   const curOk = cur && (cur.idx === undefined || cur.idx === idx);
   const imgSrc = curOk ? (cur.local ? api.imgKey(cur.key, cur.ext, gid) : (cur.src ? api.img(cur.src, gid) : '')) : '';
 
+  imgSrcRef.current = imgSrc;
+  const dlPct = dlProgress && dlProgress.total > 0 ? Math.min(100, (dlProgress.received / dlProgress.total) * 100) : null;
+
   return (
     <div className={'reader mode-' + mode + (continuous ? ' continuous' : '') + (showSidebar ? ' has-sidebar' : '')}>
       {showSidebar && (
@@ -251,6 +322,7 @@ export default function ReaderPage({ gid, token, startIndex, title, nav, toast, 
         </aside>
       )}
       <div className="main">
+      {showBar && (
       <div className="bar">
         <button className="btn sm" onClick={() => nav({ name: 'gallery', gid, token })}>← 返回图集</button>
         <button className="btn sm" onClick={() => nav(listReturn || { name: 'search', query: '' })}>← 列表</button>
@@ -271,23 +343,48 @@ export default function ReaderPage({ gid, token, startIndex, title, nav, toast, 
           <option value="orig">原始大小</option>
         </select>
         <button className="btn sm" onClick={() => setContinuous((c) => !c)}>{continuous ? '单页模式' : '连续模式'}</button>
+        <button className="btn sm" onClick={reloadCurrent} title="重新加载当前页">⟳ 刷新</button>
         <button className="btn sm" onClick={() => setShowSidebar((s) => !s)}>{showSidebar ? '隐藏缩略图' : '显示缩略图'}</button>
         <button className="btn sm" onClick={saveCurrent} disabled={saving || !curOk} title="把当前页另存为">{saving ? '保存中…' : '保存'}</button>
         <button className="btn sm" onClick={toggleFullscreen}>全屏</button>
-        <button className="btn sm" onClick={() => setShowBar((s) => !s)}>{showBar ? '隐藏工具栏' : '显示工具栏'}</button>
+        <button className="btn sm" onClick={() => setShowBar(false)}>隐藏工具栏</button>
       </div>
+      )}
 
       <div className="stage" ref={stageRef} onClick={(e) => {
         const rect = (e.target as HTMLElement).getBoundingClientRect();
         const x = e.clientX - rect.left;
         if (x < rect.width * 0.3) step(-1); else if (x > rect.width * 0.7) step(1);
       }}>
+        {!showBar && (
+          <button className="btn sm"
+            style={{ position: 'absolute', top: 8, right: 8, zIndex: 20, opacity: .85 }}
+            onClick={(e2) => { e2.stopPropagation(); setShowBar(true); }}>显示工具栏</button>
+        )}
         {!continuous && (
           <>
-            {imgSrc
-              ? <img key={idx} data-idx={idx} src={imgSrc} onError={() => setImgErr('图片加载失败')} draggable={false} />
-              : <div className="spinner" />}
-            {imgErr && <div className="warnbox" style={{ position: 'absolute' }}>{imgErr}</div>}
+            {imgErr
+              ? <div className="stage-state err" onClick={reloadCurrent} title="点击重新加载">
+                  <div className="ss-icon">⚠</div>
+                  <div>{imgErr}</div>
+                  <div className="ss-hint">点击此处重试</div>
+                </div>
+              : imgSrc
+                ? <img key={idx} data-idx={idx} src={imgSrc} draggable={false}
+                    onLoad={() => setImgLoading(false)}
+                    onError={() => {
+                      // 第一次失败自动重试（多半是缓存键失效），第二次才报错
+                      if (retryCount < 1) {
+                        setRetryCount((c) => c + 1);
+                        setTimeout(() => reloadCurrent(), 700);
+                      } else {
+                        setImgErr('图片加载失败');
+                      }
+                    }} />
+                : <div className="stage-state"><RingProgress pct={dlPct} /></div>}
+            {!imgErr && imgSrc && imgLoading && (
+              <div className="stage-loading"><RingProgress pct={dlPct} /></div>
+            )}
           </>
         )}
         {continuous && loadedContinuous.map((i) => {
@@ -299,7 +396,7 @@ export default function ReaderPage({ gid, token, startIndex, title, nav, toast, 
             </div>
           );
         })}
-        <div className="hint">← → 翻页 · F 全屏 · W 切换缩放 · Esc 返回</div>
+        {showBar && <div className="hint">← → 翻页 · F 全屏 · W 切换缩放 · Ctrl+C 复制图片 · Esc 返回</div>}
       </div>
       </div>
     </div>
@@ -319,4 +416,26 @@ function ContinuousImage({ p, gid, index, api }: any) {
     return () => { alive = false; };
   }, [p.pageToken]);
   return url ? <img src={url} loading="lazy" style={{ maxWidth: '100%', margin: '0 auto' }} /> : <div style={{ height: 200 }} />;
+}
+
+
+/** 环形进度：total 未知时转圈，已知时按百分比闭合 */
+function RingProgress({ pct }: { pct: number | null }) {
+  const R = 20, C = 2 * Math.PI * R;
+  return (
+    <div className="ring-wrap">
+      <svg width="58" height="58" viewBox="0 0 58 58">
+        <circle cx="29" cy="29" r={R} fill="none" stroke="rgba(255,255,255,.13)" strokeWidth="4" />
+        {pct === null ? (
+          <circle cx="29" cy="29" r={R} fill="none" stroke="var(--accent)" strokeWidth="4"
+            strokeDasharray={C * 0.28} strokeLinecap="round" className="ring-spin" />
+        ) : (
+          <circle cx="29" cy="29" r={R} fill="none" stroke="var(--accent)" strokeWidth="4"
+            strokeDasharray={C} strokeDashoffset={C * (1 - pct / 100)}
+            transform="rotate(-90 29 29)" strokeLinecap="round" style={{ transition: 'stroke-dashoffset .18s linear' }} />
+        )}
+      </svg>
+      <div className="ring-label">{pct === null ? '加载中' : Math.round(pct) + '%'}</div>
+    </div>
+  );
 }

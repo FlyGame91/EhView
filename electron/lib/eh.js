@@ -191,6 +191,24 @@ async function archiveCost(gid, token) {
   return { cost: p.cost || '', size: p.sizeText || '', original: !!p.cost };
 }
 
+/**
+ * 启动续期：主动访问需要登录的页面，让站点重新下发 sk / hath_perks；
+ * 再访问一次 ExHentai 首页以刷新 igneous（该 cookie 约 30 天有效）。
+ * 只做读操作，不触碰任何写接口。
+ */
+async function renewCookies() {
+  const out = [];
+  try {
+    const r = await http.text(base() + '/favorites.php');
+    out.push({ step: 'favorites', status: r.status, loggedIn: !/requires you to log on/i.test(r.text) });
+  } catch (err) { out.push({ step: 'favorites', error: err.message }); }
+  try {
+    const r2 = await http.text('https://exhentai.org/');
+    out.push({ step: 'exhentai', status: r2.status });
+  } catch (err) { out.push({ step: 'exhentai', error: err.message }); }
+  return out;
+}
+
 /** 归档：生成下载链接 */
 async function archive(gid, token, resolution = 'org') {
   const url = base() + '/archiver.php?gid=' + gid + '&token=' + token;
@@ -326,4 +344,4 @@ async function whoami() {
   return { loggedIn: true, username: (m && m[1]) || (m2 && m2[1]) || cfg.get().username || 'unknown' };
 }
 
-module.exports = { base, gdata, pageListCached, search, gallery, galleryThumbs, pageList, imagePage, archive, archiveCost, archivePoll, torrents, stats, favorites, addFavorite, removeFavorite, whoami, CATS, catsToMask };
+module.exports = { base, gdata, renewCookies, pageListCached, search, gallery, galleryThumbs, pageList, imagePage, archive, archiveCost, archivePoll, torrents, stats, favorites, addFavorite, removeFavorite, whoami, CATS, catsToMask };
