@@ -143,6 +143,8 @@ function syncDir(rel) {
   }
 }
 syncDir('dist'); syncDir('electron');
+// 同步 sharp 及其运行时依赖（webp 转 PNG 用），否则打包版「复制图片」会失败
+for (const d of ['node_modules/sharp', 'node_modules/@img', 'node_modules/detect-libc', 'node_modules/semver']) syncDir(d);
 fs.copyFileSync(path.join(SRC, 'package.json'), path.join(SRC, 'release/EhView/resources/app/package.json'));
 
 // 关闭占用文件的进程
